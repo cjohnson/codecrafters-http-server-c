@@ -7,6 +7,34 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+int readUntilSpace(int fd, char* buffer, size_t buffer_size) {
+  int index = 0;
+  char charBuf;
+  int readCode;
+  while (index < buffer_size) {
+    readCode = read(fd, &charBuf, 1);
+
+    if (readCode == -1) {
+      fprintf(stderr, "Failed to read until space!\n");
+      return -1;
+    }
+
+    if (readCode == 0) {
+      return 0;
+    }
+
+    if (charBuf == ' ') {
+      buffer[index] = '\0';
+      return 1;
+    }
+
+    buffer[index] = charBuf;
+    ++index;
+  }
+
+  return -1;
+}
+
 int main() {
   // Disable output buffering
   setbuf(stdout, NULL);
@@ -54,8 +82,34 @@ int main() {
                   (unsigned int *)&client_addr_len);
   printf("Client connected\n");
 
-  char *ok = "HTTP/1.1 200 OK\r\n\r\n";
-  int bytes_sent = send(fd, ok, strlen(ok), 0);
+  const size_t buffer_size = 200;
+
+  char httpMethodBuffer[buffer_size];
+  int httpMethodBufferReadCode = readUntilSpace(fd, httpMethodBuffer, buffer_size);
+  if (httpMethodBufferReadCode != 1) {
+    printf("Failed to read HTTP Method!\n");
+    return EXIT_FAILURE;
+  }
+  printf("Read HTTP Verb: '%s'\n", httpMethodBuffer);
+
+  char httpRequestTargetBuffer[buffer_size];
+  int httpRequestTargetBufferReadCode = readUntilSpace(fd, httpRequestTargetBuffer, buffer_size);
+  if (httpRequestTargetBufferReadCode != 1) {
+    printf("Failed to read HTTP Request Target!\n");
+    return EXIT_FAILURE;
+  }
+  printf("Read HTTP Request Target: '%s'\n", httpRequestTargetBuffer);
+
+  char httpResponseBuffer[200];
+
+  if (!strcmp(httpRequestTargetBuffer, "/")) {
+    strcpy(httpResponseBuffer, "HTTP/1.1 200 OK\r\n\r\n");
+  } else {
+    strcpy(httpResponseBuffer, "HTTP/1.1 404 Not Found\r\n\r\n");
+  }
+
+  int bytes_sent = send(fd, httpResponseBuffer, strlen(httpResponseBuffer), 0);
+  printf("Sent %d bytes of response!\n", bytes_sent);
 
   close(server_fd);
 
