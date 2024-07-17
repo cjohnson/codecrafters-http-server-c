@@ -82,34 +82,32 @@ int main() {
                   (unsigned int *)&client_addr_len);
   printf("Client connected\n");
 
-  const size_t buffer_size = 200;
+  char request_buffer[1024];
+  read(fd, request_buffer, 1024);
 
-  char httpMethodBuffer[buffer_size];
-  int httpMethodBufferReadCode = readUntilSpace(fd, httpMethodBuffer, buffer_size);
-  if (httpMethodBufferReadCode != 1) {
-    printf("Failed to read HTTP Method!\n");
-    return EXIT_FAILURE;
-  }
-  printf("Read HTTP Verb: '%s'\n", httpMethodBuffer);
+  strtok(request_buffer, " ");
+  char *request_target = strtok(NULL, " ");
 
-  char httpRequestTargetBuffer[buffer_size];
-  int httpRequestTargetBufferReadCode = readUntilSpace(fd, httpRequestTargetBuffer, buffer_size);
-  if (httpRequestTargetBufferReadCode != 1) {
-    printf("Failed to read HTTP Request Target!\n");
-    return EXIT_FAILURE;
-  }
-  printf("Read HTTP Request Target: '%s'\n", httpRequestTargetBuffer);
+  if (!strncmp(request_target, "/echo/", 6)) {
+    size_t content_length = strlen(request_target) - 6;
+    char *content = request_target + 6;
 
-  char httpResponseBuffer[200];
+    char response[1024];
+    int length = 0;
+    length += sprintf(response + length, "HTTP/1.1 200 OK\r\n");
+    length += sprintf(response + length, "Content-Type: text/plain\r\n");
+    length += sprintf(response + length, "Content-Length: %zu\r\n", content_length);
+    length += sprintf(response + length, "\r\n");
+    length += sprintf(response + length, "%s\r\n", content);
 
-  if (!strcmp(httpRequestTargetBuffer, "/")) {
-    strcpy(httpResponseBuffer, "HTTP/1.1 200 OK\r\n\r\n");
+    send(fd, response, strlen(response), 0);
+  } else if (!strcmp(request_target, "/")) {
+    char response[] = "HTTP/1.1 200 OK\r\n\r\n";
+    send(fd, response, strlen(response), 0);
   } else {
-    strcpy(httpResponseBuffer, "HTTP/1.1 404 Not Found\r\n\r\n");
+    char response[] = "HTTP/1.1 404 Not Found\r\n\r\n";
+    send(fd, response, strlen(response), 0);
   }
-
-  int bytes_sent = send(fd, httpResponseBuffer, strlen(httpResponseBuffer), 0);
-  printf("Sent %d bytes of response!\n", bytes_sent);
 
   close(server_fd);
 
