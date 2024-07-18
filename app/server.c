@@ -127,7 +127,7 @@ int main() {
         continue;
       }
 
-      char *user_agent_token = strtok(NULL, "\r\n");
+      char *user_agent_token = strtok(NULL, ": \r\n");
       strcpy(user_agent, user_agent_token);
       content_length = strlen(user_agent);
 
