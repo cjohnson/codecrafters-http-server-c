@@ -104,6 +104,51 @@ int main() {
   } else if (!strcmp(request_target, "/")) {
     char response[] = "HTTP/1.1 200 OK\r\n\r\n";
     send(fd, response, strlen(response), 0);
+  } else if (!strcmp(request_target, "/user-agent")) {
+    char user_agent[64];
+    size_t content_length;
+
+    // Read to end of request line
+    strtok(NULL, "\r\n");
+    // Read to end of request line
+    strtok(NULL, "\r\n");
+
+    int found_user_agent = 0;
+    while(found_user_agent == 0) {
+      // Read header key
+      char *header_key = strtok(NULL, ": \r\n");
+      printf("Found Header: %s\n", header_key);
+      if (!header_key) {
+        break;
+      }
+
+      if (strcmp(header_key, "User-Agent") != 0) {
+        strtok(NULL, "\r\n");
+        continue;
+      }
+
+      char *user_agent_token = strtok(NULL, "\r\n");
+      strcpy(user_agent, user_agent_token);
+      content_length = strlen(user_agent);
+
+      printf("Read User-Agent: %s\n", user_agent);
+      found_user_agent = 1;
+    }
+
+    if (found_user_agent != 1) {
+      fprintf(stderr, "Failed to find User-Agent header!\n");
+      return EXIT_FAILURE;
+    }
+
+    char response[1024];
+    int length = 0;
+    length += sprintf(response + length, "HTTP/1.1 200 OK\r\n");
+    length += sprintf(response + length, "Content-Type: text/plain\r\n");
+    length += sprintf(response + length, "Content-Length: %zu\r\n", content_length);
+    length += sprintf(response + length, "\r\n");
+    length += sprintf(response + length, "%s\r\n", user_agent);
+
+    send(fd, response, strlen(response), 0);
   } else {
     char response[] = "HTTP/1.1 404 Not Found\r\n\r\n";
     send(fd, response, strlen(response), 0);
