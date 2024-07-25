@@ -22,9 +22,9 @@ typedef struct http_request {
   int num_headers;
 } http_request; 
 
-typedef struct thread_info {
+struct thread_info {
   int socket_fd;
-} thread_info;
+};
 
 /* Parse an HTTP request */
 void parse_http_request(char *, http_request *);
@@ -78,7 +78,7 @@ int main() {
     int fd = accept(server_fd, (struct sockaddr *)&client_addr, (unsigned int *)&client_addr_len);
 
     pthread_t thread;
-    thread_info thread_info;
+    struct thread_info thread_info;
     thread_info.socket_fd = fd;
     pthread_create(&thread, NULL, handle_request, &thread_info);
   }
@@ -138,12 +138,12 @@ void parse_http_request(char *http_request_buffer, http_request *http_request) {
 }
 
 void *handle_request(void *ptr) {
-  thread_info *thread_info = ptr;
+  struct thread_info thread_info = *((struct thread_info *)ptr);
 
   char request_buffer[1024];
   char *token_ptr = NULL;
   char *request_ptr = request_buffer;
-  read(thread_info->socket_fd, request_buffer, 1024);
+  read(thread_info.socket_fd, request_buffer, 1024);
 
   http_request *http_request = malloc(sizeof(struct http_request));
   parse_http_request(request_buffer, http_request);
@@ -151,7 +151,6 @@ void *handle_request(void *ptr) {
   if (!strncmp(http_request->target, "/echo/", 6)) {
     printf("Matched route: '/echo'\n");
 
-    printf("%s\n", http_request->target + 6);
     size_t content_length = strlen(http_request->target) - 6;
     char *content = http_request->target + 6;
 
@@ -163,7 +162,7 @@ void *handle_request(void *ptr) {
     length += sprintf(response + length, "\r\n");
     length += sprintf(response + length, "%s\r\n", content);
 
-    send(thread_info->socket_fd, response, strlen(response), 0);
+    send(thread_info.socket_fd, response, strlen(response), 0);
     return NULL;
   }
 
@@ -189,7 +188,7 @@ void *handle_request(void *ptr) {
     length += sprintf(response + length, "\r\n");
     length += sprintf(response + length, "%s\r\n", user_agent_val);
 
-    send(thread_info->socket_fd, response, strlen(response), 0);
+    send(thread_info.socket_fd, response, strlen(response), 0);
     return NULL;
   }
 
@@ -202,7 +201,7 @@ void *handle_request(void *ptr) {
     length += sprintf(response + length, "Content-Length: 0\r\n");
     length += sprintf(response + length, "\r\n");
 
-    send(thread_info->socket_fd, response, strlen(response), 0);
+    send(thread_info.socket_fd, response, strlen(response), 0);
     return NULL;
   }
 
@@ -212,7 +211,6 @@ void *handle_request(void *ptr) {
   length += sprintf(response + length, "Content-Length: 0\r\n");
   length += sprintf(response + length, "\r\n");
 
-  send(thread_info->socket_fd, response, strlen(response), 0);
-  close(thread_info->socket_fd);
+  send(thread_info.socket_fd, response, strlen(response), 0);
   return NULL;
 }
