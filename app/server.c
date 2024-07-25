@@ -1,39 +1,36 @@
 #include <errno.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
-int readUntilSpace(int fd, char* buffer, size_t buffer_size) {
-  int index = 0;
-  char charBuf;
-  int readCode;
-  while (index < buffer_size) {
-    readCode = read(fd, &charBuf, 1);
+typedef struct http_header {
+  char key[32];
+  char value[32];
+} http_header;
 
-    if (readCode == -1) {
-      fprintf(stderr, "Failed to read until space!\n");
-      return -1;
-    }
+typedef struct http_request {
+  char method[8];
+  char target[64];
+  char version[16];
+  http_header headers[16];
+  int num_headers;
+} http_request; 
 
-    if (readCode == 0) {
-      return 0;
-    }
+typedef struct thread_info {
+  int socket_fd;
+} thread_info;
 
-    if (charBuf == ' ') {
-      buffer[index] = '\0';
-      return 1;
-    }
+/* Parse an HTTP request */
+void parse_http_request(char *, http_request *);
 
-    buffer[index] = charBuf;
-    ++index;
-  }
+/* Handle a socket request */
+void *handle_request(void *);
 
-  return -1;
-}
 
 int main() {
   // Disable output buffering
@@ -82,79 +79,133 @@ int main() {
                   (unsigned int *)&client_addr_len);
   printf("Client connected\n");
 
-  char request_buffer[1024];
-  read(fd, request_buffer, 1024);
-
-  strtok(request_buffer, " ");
-  char *request_target = strtok(NULL, " ");
-
-  if (!strncmp(request_target, "/echo/", 6)) {
-    size_t content_length = strlen(request_target) - 6;
-    char *content = request_target + 6;
-
-    char response[1024];
-    int length = 0;
-    length += sprintf(response + length, "HTTP/1.1 200 OK\r\n");
-    length += sprintf(response + length, "Content-Type: text/plain\r\n");
-    length += sprintf(response + length, "Content-Length: %zu\r\n", content_length);
-    length += sprintf(response + length, "\r\n");
-    length += sprintf(response + length, "%s\r\n", content);
-
-    send(fd, response, strlen(response), 0);
-  } else if (!strcmp(request_target, "/")) {
-    char response[] = "HTTP/1.1 200 OK\r\n\r\n";
-    send(fd, response, strlen(response), 0);
-  } else if (!strcmp(request_target, "/user-agent")) {
-    char user_agent[64];
-    size_t content_length;
-
-    // Read to end of request line
-    strtok(NULL, "\r\n");
-    // Read to end of request line
-    strtok(NULL, "\r\n");
-
-    int found_user_agent = 0;
-    while(found_user_agent == 0) {
-      // Read header key
-      char *header_key = strtok(NULL, ": \r\n");
-      printf("Found Header: %s\n", header_key);
-      if (!header_key) {
-        break;
-      }
-
-      if (strcmp(header_key, "User-Agent") != 0) {
-        strtok(NULL, "\r\n");
-        continue;
-      }
-
-      char *user_agent_token = strtok(NULL, ": \r\n");
-      strcpy(user_agent, user_agent_token);
-      content_length = strlen(user_agent);
-
-      printf("Read User-Agent: %s\n", user_agent);
-      found_user_agent = 1;
-    }
-
-    if (found_user_agent != 1) {
-      fprintf(stderr, "Failed to find User-Agent header!\n");
-      return EXIT_FAILURE;
-    }
-
-    char response[1024];
-    int length = 0;
-    length += sprintf(response + length, "HTTP/1.1 200 OK\r\n");
-    length += sprintf(response + length, "Content-Type: text/plain\r\n");
-    length += sprintf(response + length, "Content-Length: %zu\r\n", content_length);
-    length += sprintf(response + length, "\r\n");
-    length += sprintf(response + length, "%s\r\n", user_agent);
-
-    send(fd, response, strlen(response), 0);
-  } else {
-    char response[] = "HTTP/1.1 404 Not Found\r\n\r\n";
-    send(fd, response, strlen(response), 0);
-  }
+  thread_info thread_info;
+  thread_info.socket_fd = fd;
+  handle_request(&thread_info);
 
   close(server_fd);
 
   return 0;
+}
+
+void parse_http_request(char *http_request_buffer, http_request *http_request) {
+  char *token_ptr;
+  char *request_ptr = http_request_buffer;
+
+  token_ptr = strpbrk(request_ptr, " ");
+  *token_ptr = '\0';
+  strcpy(http_request->method, request_ptr);
+  *token_ptr = ' ';
+  request_ptr = token_ptr + 1;
+  printf("HTTP Method: %s\n", http_request->method);
+
+  token_ptr = strpbrk(request_ptr, " ");
+  *token_ptr = '\0';
+  strcpy(http_request->target, request_ptr);
+  *token_ptr = ' ';
+  request_ptr = token_ptr + 1;
+  printf("HTTP Target: %s\n", http_request->target);
+
+  token_ptr = strpbrk(request_ptr, "\r");
+  *token_ptr = '\0';
+  strcpy(http_request->version, request_ptr);
+  *token_ptr = '\r';
+  request_ptr = token_ptr + 2;
+  printf("HTTP Version: %s\n", http_request->version);
+
+  for (int i = 0; i < 10; ++i) {
+    if (*request_ptr == '\r') {
+      http_request->num_headers = i;
+      break;
+    }
+
+    http_header *http_header = &http_request->headers[i];
+
+    token_ptr = strpbrk(request_ptr, ":");
+    *token_ptr = '\0';
+    strcpy(http_header->key, request_ptr);
+    *token_ptr = ':';
+    request_ptr = token_ptr + 2;
+
+    token_ptr = strpbrk(request_ptr, "\r");
+    *token_ptr = '\0';
+    strcpy(http_header->value, request_ptr);
+    *token_ptr = '\r';
+    request_ptr = token_ptr + 2;
+
+    printf("Parsed header with key='%s', val='%s'\n", http_header->key, http_header->value);
+  }
+  printf("Read %d Headers\n", http_request->num_headers);
+}
+
+void *handle_request(void *ptr) {
+  thread_info *thread_info = ptr;
+
+  char request_buffer[1024];
+  char *token_ptr = NULL;
+  char *request_ptr = request_buffer;
+  read(thread_info->socket_fd, request_buffer, 1024);
+
+  http_request *http_request = malloc(sizeof(struct http_request));
+  parse_http_request(request_buffer, http_request);
+
+  if (!strcmp(http_request->target, "/")) {
+    printf("Matched route: '/'\n");
+
+    char response[] = "HTTP/1.1 200 OK\r\n\r\n";
+    send(thread_info->socket_fd, response, strlen(response), 0);
+
+    return NULL;
+  }
+
+  if (!strncmp(http_request->target, "/echo/", 6)) {
+    printf("Matched route: '/echo'\n");
+
+    printf("%s\n", http_request->target + 6);
+    size_t content_length = strlen(http_request->target) - 6;
+    char *content = http_request->target + 6;
+
+    char response[1024];
+    int length = 0;
+    length += sprintf(response + length, "HTTP/1.1 200 OK\r\n");
+    length += sprintf(response + length, "Content-Type: text/plain\r\n");
+    length += sprintf(response + length, "Content-Length: %zu\r\n", content_length);
+    length += sprintf(response + length, "\r\n");
+    length += sprintf(response + length, "%s", content);
+
+    send(thread_info->socket_fd, response, strlen(response), 0);
+
+    return NULL;
+  }
+
+  if (!strcmp(http_request->target, "/user-agent")) {
+    printf("Matched route: '/user-agent'\n");
+
+    char *user_agent_val = NULL;
+    for (int i = 0; i < 10; ++i) {
+      http_header *http_header = &http_request->headers[i];
+
+      if (!strcmp(http_header->key, "User-Agent")) {
+        user_agent_val = http_header->value;
+      }
+    }
+
+    unsigned long content_length = strlen(user_agent_val);
+
+    char response[1024];
+    int length = 0;
+    length += sprintf(response + length, "HTTP/1.1 200 OK\r\n");
+    length += sprintf(response + length, "Content-Type: text/plain\r\n");
+    length += sprintf(response + length, "Content-Length: %zu\r\n", content_length);
+    length += sprintf(response + length, "\r\n");
+    length += sprintf(response + length, "%s", user_agent_val);
+
+    send(thread_info->socket_fd, response, strlen(response), 0);
+
+    return NULL;
+  }
+
+  char response[] = "HTTP/1.1 404 Not Found\r\n\r\n";
+  send(thread_info->socket_fd, response, strlen(response), 0);
+  return NULL;
 }
