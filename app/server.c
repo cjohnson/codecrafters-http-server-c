@@ -2,6 +2,7 @@
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <pthread.h>
+#include <sys/types.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -72,19 +73,17 @@ int main() {
     return 1;
   }
 
-  printf("Waiting for a client to connect...\n");
-  client_addr_len = sizeof(client_addr);
+  while (1) {
+    client_addr_len = sizeof(client_addr);
+    int fd = accept(server_fd, (struct sockaddr *)&client_addr, (unsigned int *)&client_addr_len);
 
-  int fd = accept(server_fd, (struct sockaddr *)&client_addr,
-                  (unsigned int *)&client_addr_len);
-  printf("Client connected\n");
-
-  thread_info thread_info;
-  thread_info.socket_fd = fd;
-  handle_request(&thread_info);
+    pthread_t thread;
+    thread_info thread_info;
+    thread_info.socket_fd = fd;
+    pthread_create(&thread, NULL, handle_request, &thread_info);
+  }
 
   close(server_fd);
-
   return 0;
 }
 
