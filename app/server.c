@@ -80,8 +80,7 @@ int main() {
     pthread_t thread;
     thread_info thread_info;
     thread_info.socket_fd = fd;
-    //pthread_create(&thread, NULL, handle_request, &thread_info);
-    handle_request(&thread_info);
+    pthread_create(&thread, NULL, handle_request, &thread_info);
   }
 
   close(server_fd);
