@@ -165,7 +165,6 @@ void *handle_request(void *ptr) {
     length += sprintf(response + length, "%s\r\n", content);
 
     send(thread_info->socket_fd, response, strlen(response), 0);
-    close(thread_info->socket_fd);
     return NULL;
   }
 
@@ -192,7 +191,6 @@ void *handle_request(void *ptr) {
     length += sprintf(response + length, "%s\r\n", user_agent_val);
 
     send(thread_info->socket_fd, response, strlen(response), 0);
-    close(thread_info->socket_fd);
     return NULL;
   }
 
@@ -202,16 +200,17 @@ void *handle_request(void *ptr) {
     char response[1024];
     int length = 0;
     length += sprintf(response + length, "HTTP/1.1 200 OK\r\n");
+    length += sprintf(response + length, "Content-Length: 0\r\n");
     length += sprintf(response + length, "\r\n");
 
     send(thread_info->socket_fd, response, strlen(response), 0);
-    close(thread_info->socket_fd);
     return NULL;
   }
 
   char response[1024];
   int length = 0;
   length += sprintf(response + length, "HTTP/1.1 404 Not Found\r\n");
+  length += sprintf(response + length, "Content-Length: 0\r\n");
   length += sprintf(response + length, "\r\n");
 
   send(thread_info->socket_fd, response, strlen(response), 0);
