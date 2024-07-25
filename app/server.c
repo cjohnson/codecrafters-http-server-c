@@ -154,6 +154,7 @@ void *handle_request(void *ptr) {
     char response[] = "HTTP/1.1 200 OK\r\n\r\n";
     send(thread_info->socket_fd, response, strlen(response), 0);
 
+    close(thread_info->socket_fd);
     return NULL;
   }
 
@@ -174,6 +175,7 @@ void *handle_request(void *ptr) {
 
     send(thread_info->socket_fd, response, strlen(response), 0);
 
+    close(thread_info->socket_fd);
     return NULL;
   }
 
@@ -201,10 +203,12 @@ void *handle_request(void *ptr) {
 
     send(thread_info->socket_fd, response, strlen(response), 0);
 
+    close(thread_info->socket_fd);
     return NULL;
   }
 
   char response[] = "HTTP/1.1 404 Not Found\r\n\r\n";
   send(thread_info->socket_fd, response, strlen(response), 0);
+  close(thread_info->socket_fd);
   return NULL;
 }
