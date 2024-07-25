@@ -80,7 +80,8 @@ int main() {
     pthread_t thread;
     thread_info thread_info;
     thread_info.socket_fd = fd;
-    pthread_create(&thread, NULL, handle_request, &thread_info);
+    //pthread_create(&thread, NULL, handle_request, &thread_info);
+    handle_request(&thread_info);
   }
 
   close(server_fd);
@@ -148,16 +149,6 @@ void *handle_request(void *ptr) {
   http_request *http_request = malloc(sizeof(struct http_request));
   parse_http_request(request_buffer, http_request);
 
-  if (!strcmp(http_request->target, "/")) {
-    printf("Matched route: '/'\n");
-
-    char response[] = "HTTP/1.1 200 OK\r\n\r\n";
-    send(thread_info->socket_fd, response, strlen(response), 0);
-
-    close(thread_info->socket_fd);
-    return NULL;
-  }
-
   if (!strncmp(http_request->target, "/echo/", 6)) {
     printf("Matched route: '/echo'\n");
 
@@ -171,10 +162,9 @@ void *handle_request(void *ptr) {
     length += sprintf(response + length, "Content-Type: text/plain\r\n");
     length += sprintf(response + length, "Content-Length: %zu\r\n", content_length);
     length += sprintf(response + length, "\r\n");
-    length += sprintf(response + length, "%s", content);
+    length += sprintf(response + length, "%s\r\n", content);
 
     send(thread_info->socket_fd, response, strlen(response), 0);
-
     close(thread_info->socket_fd);
     return NULL;
   }
@@ -199,15 +189,31 @@ void *handle_request(void *ptr) {
     length += sprintf(response + length, "Content-Type: text/plain\r\n");
     length += sprintf(response + length, "Content-Length: %zu\r\n", content_length);
     length += sprintf(response + length, "\r\n");
-    length += sprintf(response + length, "%s", user_agent_val);
+    length += sprintf(response + length, "%s\r\n", user_agent_val);
 
     send(thread_info->socket_fd, response, strlen(response), 0);
-
     close(thread_info->socket_fd);
     return NULL;
   }
 
-  char response[] = "HTTP/1.1 404 Not Found\r\n\r\n";
+  if (!strcmp(http_request->target, "/")) {
+    printf("Matched route: '/'\n");
+
+    char response[1024];
+    int length = 0;
+    length += sprintf(response + length, "HTTP/1.1 200 OK\r\n");
+    length += sprintf(response + length, "\r\n");
+
+    send(thread_info->socket_fd, response, strlen(response), 0);
+    close(thread_info->socket_fd);
+    return NULL;
+  }
+
+  char response[1024];
+  int length = 0;
+  length += sprintf(response + length, "HTTP/1.1 404 Not Found\r\n");
+  length += sprintf(response + length, "\r\n");
+
   send(thread_info->socket_fd, response, strlen(response), 0);
   close(thread_info->socket_fd);
   return NULL;
