@@ -139,7 +139,7 @@ void parse_http_request(char *http_request_buffer, http_request *http_request) {
 
 void *handle_request(void *ptr) {
   struct thread_info thread_info = *((struct thread_info *)ptr);
-  printf("%d\n", thread_info.socket_fd);
+  printf("Starting thread with fd: %d\n", thread_info.socket_fd);
 
   char request_buffer[1024];
   char *token_ptr = NULL;
@@ -164,7 +164,7 @@ void *handle_request(void *ptr) {
     length += sprintf(response + length, "%s\r\n", content);
 
     send(thread_info.socket_fd, response, strlen(response), 0);
-    printf("%d\n", thread_info.socket_fd);
+    printf("Finish thread with fd: %d\n", thread_info.socket_fd);
     return NULL;
   }
 
@@ -191,7 +191,7 @@ void *handle_request(void *ptr) {
     length += sprintf(response + length, "%s\r\n", user_agent_val);
 
     send(thread_info.socket_fd, response, strlen(response), 0);
-    printf("%d\n", thread_info.socket_fd);
+    printf("Finish thread with fd: %d\n", thread_info.socket_fd);
     return NULL;
   }
 
@@ -205,7 +205,7 @@ void *handle_request(void *ptr) {
     length += sprintf(response + length, "\r\n");
 
     send(thread_info.socket_fd, response, strlen(response), 0);
-    printf("%d\n", thread_info.socket_fd);
+    printf("Finish thread with fd: %d\n", thread_info.socket_fd);
     return NULL;
   }
 
