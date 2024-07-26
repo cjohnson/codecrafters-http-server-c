@@ -139,11 +139,11 @@ void *handle_request(void *ptr) {
     return NULL;
   }
 
-  if (!strncmp(http_request->target, "/file/", 6)) {
-    printf("[Socket %d]: Matched route: '/file/'\n", socket_fd);
+  if (!strncmp(http_request->target, "/files/", 7)) {
+    printf("[Socket %d]: Matched route: '/files/'\n", socket_fd);
 
     char path[200];
-    char *subpath = http_request->target + 6;
+    char *subpath = http_request->target + 7;
 
     strcpy(path, directory);
     strcat(path, subpath);
