@@ -23,7 +23,7 @@ typedef struct http_request {
 } http_request; 
 
 /* Parse an HTTP request */
-void parse_http_request(char *, http_request *);
+void parse_http_request(int, char *, http_request *);
 
 /* Handle a socket request */
 void *handle_request(void *);
@@ -42,19 +42,21 @@ int main() {
     printf("Socket creation failed: %s...\n", strerror(errno));
     return 1;
   }
+  printf("[Server] Created socket\n");
 
   // Since the tester restarts your program quite often, setting SO_REUSEADDR
   // ensures that we don't run into 'Address already in use' errors
   int reuse = 1;
-  if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) <
-      0) {
+  if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
     printf("SO_REUSEADDR failed: %s \n", strerror(errno));
     return 1;
   }
+  printf("[Server] Set socket options\n");
 
+  int port_number = 4221;
   struct sockaddr_in serv_addr = {
       .sin_family = AF_INET,
-      .sin_port = htons(4221),
+      .sin_port = htons(port_number),
       .sin_addr = {htonl(INADDR_ANY)},
   };
 
@@ -62,26 +64,30 @@ int main() {
     printf("Bind failed: %s \n", strerror(errno));
     return 1;
   }
+  printf("[Server] Bound socket to port %d\n", port_number);
 
   int connection_backlog = 10;
   if (listen(server_fd, connection_backlog) != 0) {
     printf("Listen failed: %s \n", strerror(errno));
     return 1;
   }
+  printf("[Server] Socket listening on port %d\n", port_number);
 
+  client_addr_len = sizeof(client_addr);
   while (1) {
-    client_addr_len = sizeof(client_addr);
     int fd = accept(server_fd, (struct sockaddr *)&client_addr, (unsigned int *)&client_addr_len);
+    printf("[Server] Accepted connection with socket=%d\n", fd);
 
     pthread_t thread;
     pthread_create(&thread, NULL, handle_request, &fd);
+    printf("[Server] Created new thread to handle socket=%d\n", fd);
   }
 
   close(server_fd);
   return 0;
 }
 
-void parse_http_request(char *http_request_buffer, http_request *http_request) {
+void parse_http_request(int socket_fd, char *http_request_buffer, http_request *http_request) {
   char *token_ptr;
   char *request_ptr = http_request_buffer;
 
@@ -90,21 +96,21 @@ void parse_http_request(char *http_request_buffer, http_request *http_request) {
   strcpy(http_request->method, request_ptr);
   *token_ptr = ' ';
   request_ptr = token_ptr + 1;
-  printf("HTTP Method: %s\n", http_request->method);
+  printf("[Socket %d]: Parsed HTTP Method: %s\n", socket_fd, http_request->method);
 
   token_ptr = strpbrk(request_ptr, " ");
   *token_ptr = '\0';
   strcpy(http_request->target, request_ptr);
   *token_ptr = ' ';
   request_ptr = token_ptr + 1;
-  printf("HTTP Target: %s\n", http_request->target);
+  printf("[Socket %d]: Parsed HTTP Target: %s\n", socket_fd, http_request->target);
 
   token_ptr = strpbrk(request_ptr, "\r");
   *token_ptr = '\0';
   strcpy(http_request->version, request_ptr);
   *token_ptr = '\r';
   request_ptr = token_ptr + 2;
-  printf("HTTP Version: %s\n", http_request->version);
+  printf("[Socket %d]: Parsed HTTP Version: %s\n", socket_fd, http_request->version);
 
   for (int i = 0; i < 10; ++i) {
     if (*request_ptr == '\r') {
@@ -126,25 +132,27 @@ void parse_http_request(char *http_request_buffer, http_request *http_request) {
     *token_ptr = '\r';
     request_ptr = token_ptr + 2;
 
-    printf("Parsed header with key='%s', val='%s'\n", http_header->key, http_header->value);
+    printf("[Socket %d]: Parsed '%s' Header: '%s'\n", socket_fd, http_header->key, http_header->value);
   }
-  printf("Read %d Headers\n", http_request->num_headers);
+  printf("[Socket %d]: Read %d Headers\n", socket_fd, http_request->num_headers);
 }
 
 void *handle_request(void *ptr) {
   int socket_fd = *((int *)ptr);
-  printf("Starting thread with fd: %d\n", socket_fd);
 
+  printf("[Socket %d]: Waiting for data...\n", socket_fd);
   char request_buffer[1024];
   char *token_ptr = NULL;
   char *request_ptr = request_buffer;
   read(socket_fd, request_buffer, 1024);
+  printf("[Socket %d]: Received data...\n", socket_fd);
 
   http_request *http_request = malloc(sizeof(struct http_request));
-  parse_http_request(request_buffer, http_request);
+  parse_http_request(socket_fd, request_buffer, http_request);
+  printf("[Socket %d]: Parsed HTTP Request...\n", socket_fd);
 
   if (!strncmp(http_request->target, "/echo/", 6)) {
-    printf("Matched route: '/echo'\n");
+    printf("[Socket %d]: Matched route: '/echo'\n", socket_fd);
 
     size_t content_length = strlen(http_request->target) - 6;
     char *content = http_request->target + 6;
@@ -158,12 +166,13 @@ void *handle_request(void *ptr) {
     length += sprintf(response + length, "%s\r\n", content);
 
     send(socket_fd, response, strlen(response), 0);
-    printf("Finish thread with fd: %d\n", socket_fd);
+    close(socket_fd);
+    printf("[Socket %d]: Closed socket, end thread.\n", socket_fd);
     return NULL;
   }
 
   if (!strcmp(http_request->target, "/user-agent")) {
-    printf("Matched route: '/user-agent'\n");
+    printf("[Socket %d]: Matched route: '/user-agent'\n", socket_fd);
 
     char *user_agent_val = NULL;
     for (int i = 0; i < 10; ++i) {
@@ -185,12 +194,13 @@ void *handle_request(void *ptr) {
     length += sprintf(response + length, "%s\r\n", user_agent_val);
 
     send(socket_fd, response, strlen(response), 0);
-    printf("Finish thread with fd: %d\n", socket_fd);
+    close(socket_fd);
+    printf("[Socket %d]: Closed socket, end thread.\n", socket_fd);
     return NULL;
   }
 
   if (!strcmp(http_request->target, "/")) {
-    printf("Matched route: '/'\n");
+    printf("[Socket %d]: Matched route: '/'\n", socket_fd);
 
     char response[1024];
     int length = 0;
@@ -199,7 +209,8 @@ void *handle_request(void *ptr) {
     length += sprintf(response + length, "\r\n");
 
     send(socket_fd, response, strlen(response), 0);
-    printf("Finish thread with fd: %d\n", socket_fd);
+    close(socket_fd);
+    printf("[Socket %d]: Closed socket, end thread.\n", socket_fd);
     return NULL;
   }
 
@@ -210,6 +221,7 @@ void *handle_request(void *ptr) {
   length += sprintf(response + length, "\r\n");
 
   send(socket_fd, response, strlen(response), 0);
-  printf("Finish thread with fd: %d\n", socket_fd);
+  close(socket_fd);
+  printf("[Socket %d]: Closed socket, end thread.\n", socket_fd);
   return NULL;
 }
