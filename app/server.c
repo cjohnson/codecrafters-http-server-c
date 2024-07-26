@@ -34,12 +34,11 @@ void parse_http_request(int, char *, http_request *);
 void *handle_request(void *);
 
 int main(int argc, char **argv) {
-  if (argc < 3) {
-    fprintf(stderr, "Insufficient arguments! Required --directory flag\n");
-    return EXIT_FAILURE;
-  }
   char directory[200];
-  strncpy(directory, argv[2], 200);
+  *directory = '\0';
+  if (argc >= 3) {
+    strncpy(directory, argv[2], 200);
+  }
 
   // Disable output buffering
   setbuf(stdout, NULL);
