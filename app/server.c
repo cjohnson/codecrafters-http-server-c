@@ -161,6 +161,7 @@ void *handle_request(void *ptr) {
       char response[1024];
       int length = 0;
       length += sprintf(response + length, "HTTP/1.1 200 OK\r\n");
+      length += sprintf(response + length, "Content-Type: application/octet-stream\r\n");
       length += sprintf(response + length, "Content-Length: %zu\r\n", content_length);
       length += sprintf(response + length, "\r\n");
       length += sprintf(response + length, "%s", file_buffer);
