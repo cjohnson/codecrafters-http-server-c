@@ -20,7 +20,12 @@ typedef struct http_request {
   char version[16];
   http_header headers[16];
   int num_headers;
-} http_request; 
+} http_request;
+
+struct thread_context {
+  int socket_fd;
+  char directory[200];
+};
 
 /* Parse an HTTP request */
 void parse_http_request(int, char *, http_request *);
@@ -28,8 +33,14 @@ void parse_http_request(int, char *, http_request *);
 /* Handle a socket request */
 void *handle_request(void *);
 
+int main(int argc, char **argv) {
+  if (argc < 3) {
+    fprintf(stderr, "Insufficient arguments! Required --directory flag\n");
+    return EXIT_FAILURE;
+  }
+  char directory[200];
+  strncpy(directory, argv[2], 200);
 
-int main() {
   // Disable output buffering
   setbuf(stdout, NULL);
   setbuf(stderr, NULL);
@@ -75,11 +86,14 @@ int main() {
 
   client_addr_len = sizeof(client_addr);
   while (1) {
-    int fd = accept(server_fd, (struct sockaddr *)&client_addr, (unsigned int *)&client_addr_len);
-    printf("[Server] Accepted connection with socket=%d\n", fd);
+    int fd = accept(server_fd, (struct sockaddr *)&client_addr, (unsigned int *)&client_addr_len); printf("[Server] Accepted connection with socket=%d\n", fd);
+
+    struct thread_context context;
+    context.socket_fd = fd;
+    strcpy(context.directory, directory);
 
     pthread_t thread;
-    pthread_create(&thread, NULL, handle_request, &fd);
+    pthread_create(&thread, NULL, handle_request, &context);
     printf("[Server] Created new thread to handle socket=%d\n", fd);
   }
 
@@ -87,58 +101,12 @@ int main() {
   return 0;
 }
 
-void parse_http_request(int socket_fd, char *http_request_buffer, http_request *http_request) {
-  char *token_ptr;
-  char *request_ptr = http_request_buffer;
-
-  token_ptr = strpbrk(request_ptr, " ");
-  *token_ptr = '\0';
-  strcpy(http_request->method, request_ptr);
-  *token_ptr = ' ';
-  request_ptr = token_ptr + 1;
-  printf("[Socket %d]: Parsed HTTP Method: %s\n", socket_fd, http_request->method);
-
-  token_ptr = strpbrk(request_ptr, " ");
-  *token_ptr = '\0';
-  strcpy(http_request->target, request_ptr);
-  *token_ptr = ' ';
-  request_ptr = token_ptr + 1;
-  printf("[Socket %d]: Parsed HTTP Target: %s\n", socket_fd, http_request->target);
-
-  token_ptr = strpbrk(request_ptr, "\r");
-  *token_ptr = '\0';
-  strcpy(http_request->version, request_ptr);
-  *token_ptr = '\r';
-  request_ptr = token_ptr + 2;
-  printf("[Socket %d]: Parsed HTTP Version: %s\n", socket_fd, http_request->version);
-
-  for (int i = 0; i < 10; ++i) {
-    if (*request_ptr == '\r') {
-      http_request->num_headers = i;
-      break;
-    }
-
-    http_header *http_header = &http_request->headers[i];
-
-    token_ptr = strpbrk(request_ptr, ":");
-    *token_ptr = '\0';
-    strcpy(http_header->key, request_ptr);
-    *token_ptr = ':';
-    request_ptr = token_ptr + 2;
-
-    token_ptr = strpbrk(request_ptr, "\r");
-    *token_ptr = '\0';
-    strcpy(http_header->value, request_ptr);
-    *token_ptr = '\r';
-    request_ptr = token_ptr + 2;
-
-    printf("[Socket %d]: Parsed '%s' Header: '%s'\n", socket_fd, http_header->key, http_header->value);
-  }
-  printf("[Socket %d]: Read %d Headers\n", socket_fd, http_request->num_headers);
-}
-
 void *handle_request(void *ptr) {
-  int socket_fd = *((int *)ptr);
+  struct thread_context context = *((struct thread_context *)ptr);
+  int socket_fd = context.socket_fd;
+  char directory[200];
+  strcpy(directory, context.directory);
+  printf("REMOVE-ME: directory='%s'\n", directory);
 
   printf("[Socket %d]: Waiting for data...\n", socket_fd);
   char request_buffer[1024];
@@ -152,7 +120,7 @@ void *handle_request(void *ptr) {
   printf("[Socket %d]: Parsed HTTP Request...\n", socket_fd);
 
   if (!strncmp(http_request->target, "/echo/", 6)) {
-    printf("[Socket %d]: Matched route: '/echo'\n", socket_fd);
+    printf("[Socket %d]: Matched route: '/echo/'\n", socket_fd);
 
     size_t content_length = strlen(http_request->target) - 6;
     char *content = http_request->target + 6;
@@ -164,6 +132,52 @@ void *handle_request(void *ptr) {
     length += sprintf(response + length, "Content-Length: %zu\r\n", content_length);
     length += sprintf(response + length, "\r\n");
     length += sprintf(response + length, "%s\r\n", content);
+
+    send(socket_fd, response, strlen(response), 0);
+    close(socket_fd);
+    printf("[Socket %d]: Closed socket, end thread.\n", socket_fd);
+    return NULL;
+  }
+
+  if (!strncmp(http_request->target, "/file/", 6)) {
+    printf("[Socket %d]: Matched route: '/file/'\n", socket_fd);
+
+    char path[200];
+    char *subpath = http_request->target + 6;
+
+    strcpy(path, directory);
+    strcat(path, subpath);
+
+    FILE *file;
+    if ((file = fopen(path, "r"))) {
+      printf("[Socket %d]: Found file '%s'!\n", socket_fd, path);
+
+      char file_buffer[1024];
+      fread(file_buffer, 1, 1024, file);
+      printf("[Socket %d]: Read file contents!\n", socket_fd);
+
+      unsigned long content_length = strlen(file_buffer);
+
+      char response[1024];
+      int length = 0;
+      length += sprintf(response + length, "HTTP/1.1 200 OK\r\n");
+      length += sprintf(response + length, "Content-Length: %zu\r\n", content_length);
+      length += sprintf(response + length, "\r\n");
+      length += sprintf(response + length, "%s", file_buffer);
+
+      send(socket_fd, response, strlen(response), 0);
+      close(socket_fd);
+      printf("[Socket %d]: Closed socket, end thread.\n", socket_fd);
+      return NULL;
+    }
+
+    printf("[Socket %d]: Failed to find file '%s'!\n", socket_fd, path);
+
+    char response[1024];
+    int length = 0;
+    length += sprintf(response + length, "HTTP/1.1 404 Not Found\r\n");
+    length += sprintf(response + length, "Content-Length: 0\r\n");
+    length += sprintf(response + length, "\r\n");
 
     send(socket_fd, response, strlen(response), 0);
     close(socket_fd);
@@ -224,4 +238,54 @@ void *handle_request(void *ptr) {
   close(socket_fd);
   printf("[Socket %d]: Closed socket, end thread.\n", socket_fd);
   return NULL;
+}
+
+void parse_http_request(int socket_fd, char *http_request_buffer, http_request *http_request) {
+  char *token_ptr;
+  char *request_ptr = http_request_buffer;
+
+  token_ptr = strpbrk(request_ptr, " ");
+  *token_ptr = '\0';
+  strcpy(http_request->method, request_ptr);
+  *token_ptr = ' ';
+  request_ptr = token_ptr + 1;
+  printf("[Socket %d]: Parsed HTTP Method: %s\n", socket_fd, http_request->method);
+
+  token_ptr = strpbrk(request_ptr, " ");
+  *token_ptr = '\0';
+  strcpy(http_request->target, request_ptr);
+  *token_ptr = ' ';
+  request_ptr = token_ptr + 1;
+  printf("[Socket %d]: Parsed HTTP Target: %s\n", socket_fd, http_request->target);
+
+  token_ptr = strpbrk(request_ptr, "\r");
+  *token_ptr = '\0';
+  strcpy(http_request->version, request_ptr);
+  *token_ptr = '\r';
+  request_ptr = token_ptr + 2;
+  printf("[Socket %d]: Parsed HTTP Version: %s\n", socket_fd, http_request->version);
+
+  for (int i = 0; i < 10; ++i) {
+    if (*request_ptr == '\r') {
+      http_request->num_headers = i;
+      break;
+    }
+
+    http_header *http_header = &http_request->headers[i];
+
+    token_ptr = strpbrk(request_ptr, ":");
+    *token_ptr = '\0';
+    strcpy(http_header->key, request_ptr);
+    *token_ptr = ':';
+    request_ptr = token_ptr + 2;
+
+    token_ptr = strpbrk(request_ptr, "\r");
+    *token_ptr = '\0';
+    strcpy(http_header->value, request_ptr);
+    *token_ptr = '\r';
+    request_ptr = token_ptr + 2;
+
+    printf("[Socket %d]: Parsed '%s' Header: '%s'\n", socket_fd, http_header->key, http_header->value);
+  }
+  printf("[Socket %d]: Read %d Headers\n", socket_fd, http_request->num_headers);
 }
