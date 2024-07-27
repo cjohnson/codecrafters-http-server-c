@@ -9,29 +9,34 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-typedef struct http_header {
+enum http_method {
+  GET,
+  POST,
+};
+
+struct http_header {
   char key[32];
   char value[32];
-} http_header;
+};
 
-typedef struct http_request {
-  char method[8];
+struct http_request {
+  enum http_method method;
   char target[64];
   char version[16];
-  http_header headers[16];
-  int num_headers;
-} http_request;
+  struct http_header headers[16];
+  unsigned long num_headers;
+  unsigned long content_length;
+  char *body;
+};
 
 struct thread_context {
   int socket_fd;
   char directory[200];
 };
 
-/* Parse an HTTP request */
-void parse_http_request(int, char *, http_request *);
-
-/* Handle a socket request */
 void *handle_request(void *);
+
+void parse_http_request(int, char *, struct http_request *);
 
 int main(int argc, char **argv) {
   char directory[200];
@@ -105,7 +110,6 @@ void *handle_request(void *ptr) {
   int socket_fd = context.socket_fd;
   char directory[200];
   strcpy(directory, context.directory);
-  printf("REMOVE-ME: directory='%s'\n", directory);
 
   printf("[Socket %d]: Waiting for data...\n", socket_fd);
   char request_buffer[1024];
@@ -113,8 +117,9 @@ void *handle_request(void *ptr) {
   char *request_ptr = request_buffer;
   read(socket_fd, request_buffer, 1024);
   printf("[Socket %d]: Received data...\n", socket_fd);
+  printf("[Socket %d]: Raw Request: \"%s\"\n", socket_fd, request_buffer);
 
-  http_request *http_request = malloc(sizeof(struct http_request));
+  struct http_request *http_request = malloc(sizeof(struct http_request));
   parse_http_request(socket_fd, request_buffer, http_request);
   printf("[Socket %d]: Parsed HTTP Request...\n", socket_fd);
 
@@ -147,23 +152,38 @@ void *handle_request(void *ptr) {
     strcpy(path, directory);
     strcat(path, subpath);
 
-    FILE *file;
-    if ((file = fopen(path, "r"))) {
-      printf("[Socket %d]: Found file '%s'!\n", socket_fd, path);
+    if (http_request->method == GET) {
+      FILE *file;
+      if ((file = fopen(path, "r"))) {
+        printf("[Socket %d]: Found file '%s'!\n", socket_fd, path);
 
-      char file_buffer[1024];
-      fread(file_buffer, 1, 1024, file);
-      printf("[Socket %d]: Read file contents!\n", socket_fd);
+        char file_buffer[1024];
+        fread(file_buffer, sizeof(char), 1024, file);
+        printf("[Socket %d]: Read file contents!\n", socket_fd);
 
-      unsigned long content_length = strlen(file_buffer);
+        unsigned long content_length = strlen(file_buffer);
+
+        char response[1024];
+        int length = 0;
+        length += sprintf(response + length, "HTTP/1.1 200 OK\r\n");
+        length += sprintf(response + length, "Content-Type: application/octet-stream\r\n");
+        length += sprintf(response + length, "Content-Length: %zu\r\n", content_length);
+        length += sprintf(response + length, "\r\n");
+        length += sprintf(response + length, "%s", file_buffer);
+
+        send(socket_fd, response, strlen(response), 0);
+        close(socket_fd);
+        printf("[Socket %d]: Closed socket, end thread.\n", socket_fd);
+        return NULL;
+      }
+
+      printf("[Socket %d]: Failed to find file '%s'!\n", socket_fd, path);
 
       char response[1024];
       int length = 0;
-      length += sprintf(response + length, "HTTP/1.1 200 OK\r\n");
-      length += sprintf(response + length, "Content-Type: application/octet-stream\r\n");
-      length += sprintf(response + length, "Content-Length: %zu\r\n", content_length);
+      length += sprintf(response + length, "HTTP/1.1 404 Not Found\r\n");
+      length += sprintf(response + length, "Content-Length: 0\r\n");
       length += sprintf(response + length, "\r\n");
-      length += sprintf(response + length, "%s", file_buffer);
 
       send(socket_fd, response, strlen(response), 0);
       close(socket_fd);
@@ -171,18 +191,25 @@ void *handle_request(void *ptr) {
       return NULL;
     }
 
-    printf("[Socket %d]: Failed to find file '%s'!\n", socket_fd, path);
+    if (http_request->method == POST) {
+      FILE *file = fopen(path, "wb");
+      printf("[Socket %d]: Created file '%s'!\n", socket_fd, path);
 
-    char response[1024];
-    int length = 0;
-    length += sprintf(response + length, "HTTP/1.1 404 Not Found\r\n");
-    length += sprintf(response + length, "Content-Length: 0\r\n");
-    length += sprintf(response + length, "\r\n");
+      fwrite(http_request->body, sizeof(char), http_request->content_length, file);
+      fclose(file);
+      printf("[Socket %d]: Wrote contents to file!\n", socket_fd);
 
-    send(socket_fd, response, strlen(response), 0);
-    close(socket_fd);
-    printf("[Socket %d]: Closed socket, end thread.\n", socket_fd);
-    return NULL;
+      char response[1024];
+      int length = 0;
+      length += sprintf(response + length, "HTTP/1.1 201 Created\r\n");
+      length += sprintf(response + length, "Content-Length: 0\r\n");
+      length += sprintf(response + length, "\r\n");
+
+      send(socket_fd, response, strlen(response), 0);
+      close(socket_fd);
+      printf("[Socket %d]: Closed socket, end thread.\n", socket_fd);
+      return NULL;
+    }
   }
 
   if (!strcmp(http_request->target, "/user-agent")) {
@@ -190,7 +217,7 @@ void *handle_request(void *ptr) {
 
     char *user_agent_val = NULL;
     for (int i = 0; i < 10; ++i) {
-      http_header *http_header = &http_request->headers[i];
+      struct http_header *http_header = &http_request->headers[i];
 
       if (!strcmp(http_header->key, "User-Agent")) {
         user_agent_val = http_header->value;
@@ -240,16 +267,25 @@ void *handle_request(void *ptr) {
   return NULL;
 }
 
-void parse_http_request(int socket_fd, char *http_request_buffer, http_request *http_request) {
+void parse_http_request(int socket_fd, char *http_request_buffer, struct http_request *http_request) {
   char *token_ptr;
   char *request_ptr = http_request_buffer;
 
   token_ptr = strpbrk(request_ptr, " ");
   *token_ptr = '\0';
-  strcpy(http_request->method, request_ptr);
+  char method_str[16];
+  strcpy(method_str, request_ptr);
   *token_ptr = ' ';
   request_ptr = token_ptr + 1;
-  printf("[Socket %d]: Parsed HTTP Method: %s\n", socket_fd, http_request->method);
+
+  if (!strcmp(method_str, "GET")) {
+    http_request->method = GET;
+    printf("[Socket %d]: Parsed HTTP Method: GET\n", socket_fd);
+  }
+  if (!strcmp(method_str, "POST")) {
+    http_request->method = POST;
+    printf("[Socket %d]: Parsed HTTP Method: POST\n", socket_fd);
+  }
 
   token_ptr = strpbrk(request_ptr, " ");
   *token_ptr = '\0';
@@ -268,10 +304,13 @@ void parse_http_request(int socket_fd, char *http_request_buffer, http_request *
   for (int i = 0; i < 10; ++i) {
     if (*request_ptr == '\r') {
       http_request->num_headers = i;
+      request_ptr += 2;
+
+      printf("[Socket %d]: Read %lu Headers\n", socket_fd, http_request->num_headers);
       break;
     }
 
-    http_header *http_header = &http_request->headers[i];
+    struct http_header *http_header = &http_request->headers[i];
 
     token_ptr = strpbrk(request_ptr, ":");
     *token_ptr = '\0';
@@ -287,5 +326,23 @@ void parse_http_request(int socket_fd, char *http_request_buffer, http_request *
 
     printf("[Socket %d]: Parsed '%s' Header: '%s'\n", socket_fd, http_header->key, http_header->value);
   }
-  printf("[Socket %d]: Read %d Headers\n", socket_fd, http_request->num_headers);
+
+  http_request->content_length = 0;
+  for (int i = 0; i < http_request->num_headers; ++i) {
+    struct http_header *http_header = &http_request->headers[i];
+
+    if (!strcmp(http_header->key, "Content-Length")) {
+      http_request->content_length = strtoul(http_header->value, NULL, 0);
+
+      printf("[Socket %d]: Read Content-Type: %lu\n", socket_fd, http_request->content_length);
+      continue;
+    }
+  }
+
+  http_request->body = malloc((http_request->content_length + 1) * sizeof(char));
+  for (int i = 0; i < http_request->content_length; ++i) {
+    *(http_request->body + i) = *(request_ptr + i);
+  }
+  *(http_request->body + http_request->content_length) = '\0';
+  printf("[Socket %d]: Read Body with length %lu\n", socket_fd, http_request->content_length);
 }
