@@ -8,6 +8,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <zlib.h>
 
 enum http_method {
   GET,
@@ -41,6 +42,8 @@ struct thread_context {
 void *handle_request(void *);
 
 void parse_http_request(int, char *, struct http_request *);
+
+int gzip_compress(const char *input, const int input_size, char* output, const int output_size);
 
 int main(int argc, char **argv) {
   char directory[200];
@@ -130,8 +133,8 @@ void *handle_request(void *ptr) {
   if (!strncmp(http_request->target, "/echo/", 6)) {
     printf("[Socket %d]: Matched route: '/echo/'\n", socket_fd);
 
-    size_t content_length = strlen(http_request->target) - 6;
-    char *content = http_request->target + 6;
+    char uncompressed_body_content[1024];
+    strcpy(uncompressed_body_content, http_request->target + 6);
 
     char *content_encoding = NULL;
     if (http_request->headers.accept_encoding != NULL) {
@@ -144,17 +147,33 @@ void *handle_request(void *ptr) {
     }
 
     char response[1024];
-    int length = 0;
-    length += sprintf(response + length, "HTTP/1.1 200 OK\r\n");
-    length += sprintf(response + length, "Content-Type: text/plain\r\n");
-    if (content_encoding != NULL) {
-      length += sprintf(response + length, "Content-Encoding: %s\r\n", content_encoding);
-    }
-    length += sprintf(response + length, "Content-Length: %zu\r\n", content_length);
-    length += sprintf(response + length, "\r\n");
-    length += sprintf(response + length, "%s\r\n", content);
 
-    send(socket_fd, response, strlen(response), 0);
+    if (content_encoding == NULL) {
+      size_t content_length = strlen(uncompressed_body_content);
+
+      int length = 0;
+      length += sprintf(response + length, "HTTP/1.1 200 OK\r\n");
+      length += sprintf(response + length, "Content-Type: text/plain\r\n");
+      length += sprintf(response + length, "Content-Length: %zu\r\n", content_length);
+      length += sprintf(response + length, "\r\n");
+      length += sprintf(response + length, "%s\r\n", uncompressed_body_content);
+      send(socket_fd, response, strlen(response), 0);
+    }
+
+    if (!strcmp(content_encoding, "gzip")) {
+      char compressed_body_content[1024];
+      size_t content_length = gzip_compress(uncompressed_body_content, strlen(uncompressed_body_content), compressed_body_content, 1024);
+
+      int length = 0;
+      length += sprintf(response + length, "HTTP/1.1 200 OK\r\n");
+      length += sprintf(response + length, "Content-Encoding: %s\r\n", content_encoding);
+      length += sprintf(response + length, "Content-Type: text/plain\r\n");
+      length += sprintf(response + length, "Content-Length: %zu\r\n", content_length);
+      length += sprintf(response + length, "\r\n");
+      send(socket_fd, response, length, 0);
+      send(socket_fd, compressed_body_content, content_length, 0);
+    }
+
     close(socket_fd);
     printf("[Socket %d]: Closed socket, end thread.\n", socket_fd);
     return NULL;
@@ -392,4 +411,24 @@ void parse_http_request(int socket_fd, char *http_request_buffer, struct http_re
   }
   *(http_request->body + http_request->headers.content_length) = '\0';
   printf("[Socket %d]: Read Body with length %lu\n", socket_fd, http_request->headers.content_length);
+}
+
+/**
+ *  Compress a string buffer with gzip compression.
+ *  See https://stackoverflow.com/questions/49622938/gzip-compression-using-zlib-into-buffer/57699371#57699371
+ */
+int gzip_compress(const char* input, int input_size, char* output, int output_size) {
+    z_stream zs;
+    zs.zalloc = Z_NULL;
+    zs.zfree = Z_NULL;
+    zs.opaque = Z_NULL;
+    zs.avail_in = (uInt)input_size;
+    zs.next_in = (Bytef *)input;
+    zs.avail_out = (uInt)output_size;
+    zs.next_out = (Bytef *)output;
+
+    deflateInit2(&zs, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15 | 16, 8, Z_DEFAULT_STRATEGY);
+    deflate(&zs, Z_FINISH);
+    deflateEnd(&zs);
+    return zs.total_out;
 }
