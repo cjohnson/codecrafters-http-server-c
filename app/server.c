@@ -14,18 +14,17 @@ enum http_method {
   POST,
 };
 
-struct http_header {
-  char key[32];
-  char value[32];
+struct http_headers {
+  unsigned long content_length;
+  char *accept_encoding;
+  char *user_agent;
 };
 
 struct http_request {
   enum http_method method;
   char target[64];
   char version[16];
-  struct http_header headers[16];
-  unsigned long num_headers;
-  unsigned long content_length;
+  struct http_headers headers;
   char *body;
 };
 
@@ -133,6 +132,9 @@ void *handle_request(void *ptr) {
     int length = 0;
     length += sprintf(response + length, "HTTP/1.1 200 OK\r\n");
     length += sprintf(response + length, "Content-Type: text/plain\r\n");
+    if (http_request->headers.accept_encoding != NULL) {
+      length += sprintf(response + length, "Content-Encoding: %s\r\n", http_request->headers.accept_encoding);
+    }
     length += sprintf(response + length, "Content-Length: %zu\r\n", content_length);
     length += sprintf(response + length, "\r\n");
     length += sprintf(response + length, "%s\r\n", content);
@@ -195,7 +197,7 @@ void *handle_request(void *ptr) {
       FILE *file = fopen(path, "wb");
       printf("[Socket %d]: Created file '%s'!\n", socket_fd, path);
 
-      fwrite(http_request->body, sizeof(char), http_request->content_length, file);
+      fwrite(http_request->body, sizeof(char), http_request->headers.content_length, file);
       fclose(file);
       printf("[Socket %d]: Wrote contents to file!\n", socket_fd);
 
@@ -215,24 +217,13 @@ void *handle_request(void *ptr) {
   if (!strcmp(http_request->target, "/user-agent")) {
     printf("[Socket %d]: Matched route: '/user-agent'\n", socket_fd);
 
-    char *user_agent_val = NULL;
-    for (int i = 0; i < 10; ++i) {
-      struct http_header *http_header = &http_request->headers[i];
-
-      if (!strcmp(http_header->key, "User-Agent")) {
-        user_agent_val = http_header->value;
-      }
-    }
-
-    unsigned long content_length = strlen(user_agent_val);
-
     char response[1024];
     int length = 0;
     length += sprintf(response + length, "HTTP/1.1 200 OK\r\n");
     length += sprintf(response + length, "Content-Type: text/plain\r\n");
-    length += sprintf(response + length, "Content-Length: %zu\r\n", content_length);
+    length += sprintf(response + length, "Content-Length: %zu\r\n", strlen(http_request->headers.user_agent));
     length += sprintf(response + length, "\r\n");
-    length += sprintf(response + length, "%s\r\n", user_agent_val);
+    length += sprintf(response + length, "%s\r\n", http_request->headers.user_agent);
 
     send(socket_fd, response, strlen(response), 0);
     close(socket_fd);
@@ -301,48 +292,62 @@ void parse_http_request(int socket_fd, char *http_request_buffer, struct http_re
   request_ptr = token_ptr + 2;
   printf("[Socket %d]: Parsed HTTP Version: %s\n", socket_fd, http_request->version);
 
+  char header_key[64];
+  char header_value[64];
+
+  http_request->headers.content_length = 0;
+  http_request->headers.accept_encoding = NULL;
+  http_request->headers.user_agent = NULL;
   for (int i = 0; i < 10; ++i) {
     if (*request_ptr == '\r') {
-      http_request->num_headers = i;
       request_ptr += 2;
 
-      printf("[Socket %d]: Read %lu Headers\n", socket_fd, http_request->num_headers);
+      printf("[Socket %d]: Read %d Headers\n", socket_fd, i);
       break;
     }
 
-    struct http_header *http_header = &http_request->headers[i];
-
     token_ptr = strpbrk(request_ptr, ":");
     *token_ptr = '\0';
-    strcpy(http_header->key, request_ptr);
+    strcpy(header_key, request_ptr);
     *token_ptr = ':';
     request_ptr = token_ptr + 2;
 
     token_ptr = strpbrk(request_ptr, "\r");
     *token_ptr = '\0';
-    strcpy(http_header->value, request_ptr);
+    strcpy(header_value, request_ptr);
     *token_ptr = '\r';
     request_ptr = token_ptr + 2;
 
-    printf("[Socket %d]: Parsed '%s' Header: '%s'\n", socket_fd, http_header->key, http_header->value);
-  }
+    printf("[Socket %d]: Parsed '%s' Header: '%s'\n", socket_fd, header_key, header_value);
 
-  http_request->content_length = 0;
-  for (int i = 0; i < http_request->num_headers; ++i) {
-    struct http_header *http_header = &http_request->headers[i];
+    if (!strcmp(header_key, "Content-Length")) {
+      http_request->headers.content_length = strtoul(header_value, NULL, 0);
 
-    if (!strcmp(http_header->key, "Content-Length")) {
-      http_request->content_length = strtoul(http_header->value, NULL, 0);
+      printf("[Socket %d]: Read Content-Type: %lu\n", socket_fd, http_request->headers.content_length);
+      continue;
+    }
 
-      printf("[Socket %d]: Read Content-Type: %lu\n", socket_fd, http_request->content_length);
+    if (!strcmp(header_key, "User-Agent")) {
+      http_request->headers.user_agent = malloc((strlen(header_value) + 1) * sizeof(char));
+      strcpy(http_request->headers.user_agent, header_value);
+
+      printf("[Socket %d]: Read User-Agent: %s\n", socket_fd, http_request->headers.user_agent);
+      continue;
+    }
+
+    if (!strcmp(header_key, "Accept-Encoding") && !strcmp(header_value, "gzip")) {
+      http_request->headers.accept_encoding = malloc((strlen(header_value) + 1) * sizeof(char));
+      strcpy(http_request->headers.accept_encoding, header_value);
+
+      printf("[Socket %d]: Read Accept-Encoding: %s\n", socket_fd, http_request->headers.accept_encoding);
       continue;
     }
   }
 
-  http_request->body = malloc((http_request->content_length + 1) * sizeof(char));
-  for (int i = 0; i < http_request->content_length; ++i) {
+  http_request->body = malloc((http_request->headers.content_length + 1) * sizeof(char));
+  for (int i = 0; i < http_request->headers.content_length; ++i) {
     *(http_request->body + i) = *(request_ptr + i);
   }
-  *(http_request->body + http_request->content_length) = '\0';
-  printf("[Socket %d]: Read Body with length %lu\n", socket_fd, http_request->content_length);
+  *(http_request->body + http_request->headers.content_length) = '\0';
+  printf("[Socket %d]: Read Body with length %lu\n", socket_fd, http_request->headers.content_length);
 }
