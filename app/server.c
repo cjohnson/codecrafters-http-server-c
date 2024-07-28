@@ -14,9 +14,14 @@ enum http_method {
   POST,
 };
 
+struct http_accept_encoding {
+  char encodings[8][32];
+  unsigned long count;
+};
+
 struct http_headers {
   unsigned long content_length;
-  char *accept_encoding;
+  struct http_accept_encoding *accept_encoding;
   char *user_agent;
 };
 
@@ -128,12 +133,22 @@ void *handle_request(void *ptr) {
     size_t content_length = strlen(http_request->target) - 6;
     char *content = http_request->target + 6;
 
+    char *content_encoding = NULL;
+    if (http_request->headers.accept_encoding != NULL) {
+      for (int i = 0; i < http_request->headers.accept_encoding->count; ++i) {
+        if (!strcmp(http_request->headers.accept_encoding->encodings[i], "gzip")) {
+          content_encoding = http_request->headers.accept_encoding->encodings[i];
+          break;
+        }
+      }
+    }
+
     char response[1024];
     int length = 0;
     length += sprintf(response + length, "HTTP/1.1 200 OK\r\n");
     length += sprintf(response + length, "Content-Type: text/plain\r\n");
-    if (http_request->headers.accept_encoding != NULL) {
-      length += sprintf(response + length, "Content-Encoding: %s\r\n", http_request->headers.accept_encoding);
+    if (content_encoding != NULL) {
+      length += sprintf(response + length, "Content-Encoding: %s\r\n", content_encoding);
     }
     length += sprintf(response + length, "Content-Length: %zu\r\n", content_length);
     length += sprintf(response + length, "\r\n");
@@ -335,11 +350,38 @@ void parse_http_request(int socket_fd, char *http_request_buffer, struct http_re
       continue;
     }
 
-    if (!strcmp(header_key, "Accept-Encoding") && !strcmp(header_value, "gzip")) {
-      http_request->headers.accept_encoding = malloc((strlen(header_value) + 1) * sizeof(char));
-      strcpy(http_request->headers.accept_encoding, header_value);
+    if (!strcmp(header_key, "Accept-Encoding")) {
+      if (strlen(header_value) < 1) {
+        continue;
+      }
 
-      printf("[Socket %d]: Read Accept-Encoding: %s\n", socket_fd, http_request->headers.accept_encoding);
+      printf("[Socket %d]: Parsing Accept-Encoding List: '%s'\n", socket_fd, header_value);
+
+      http_request->headers.accept_encoding = malloc(sizeof(struct http_accept_encoding));
+      http_request->headers.accept_encoding->count = 0;
+
+      char *encoding_ptr = header_value;
+
+      while (1) {
+        char *encoding_token_ptr = strpbrk(encoding_ptr, ",");
+        if (encoding_token_ptr != NULL) {
+          *encoding_token_ptr = '\0';
+        }
+
+        strcpy(http_request->headers.accept_encoding->encodings[http_request->headers.accept_encoding->count], encoding_ptr);
+
+        printf("[Socket %d]: Accept-Encoding: Parsed encoding scheme '%s'\n", socket_fd, http_request->headers.accept_encoding->encodings[http_request->headers.accept_encoding->count]);
+
+        ++http_request->headers.accept_encoding->count;
+
+        if (encoding_token_ptr == NULL) {
+          break;
+        }
+        *encoding_token_ptr = ',';
+        encoding_ptr = encoding_token_ptr + 2; // gzip, notgzip
+      }
+
+      printf("[Socket %d]: Accept-Encoding: Parsed %lu encoding schemes\n", socket_fd, http_request->headers.accept_encoding->count);
       continue;
     }
   }
