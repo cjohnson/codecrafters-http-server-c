@@ -4,6 +4,36 @@
 
 #include "http_request.h"
 
+/**
+ * Parse the HTTP Method
+ *
+ * @param method_buffer The method buffer
+ * @param method The method enum
+ *
+ * @returns HTTP_OK on success, HTTP_ERROR on failure
+ */
+int http_method_parse(
+  const char *const method_buffer,
+  enum http_method *method)
+{
+  if (!strncmp(method_buffer, "GET", 3)) {
+    *method = GET;
+
+    printf("Parsed HTTP Method: GET\n");
+    return HTTP_OK;
+  }
+
+  if (!strncmp(method_buffer, "POST", 4)) {
+    *method = POST;
+
+    printf("Parsed HTTP Method: POST\n");
+    return HTTP_OK;
+  }
+
+  fprintf(stderr, "Unrecognized/Unsupported HTTP Method: '%s'\n", method_buffer);
+  return HTTP_ERROR;
+}
+
 int http_request_parse(
   const int socket_fd,
   const char *const request_buffer,
@@ -12,20 +42,16 @@ int http_request_parse(
   char *token_ptr;
   const char *request_ptr = request_buffer;
 
+  // Parse HTTP Method
+  char method_buffer[16];
   token_ptr = strpbrk(request_ptr, " ");
   *token_ptr = '\0';
-  char method_str[16];
-  strcpy(method_str, request_ptr);
+  strcpy(method_buffer, request_ptr);
   *token_ptr = ' ';
   request_ptr = token_ptr + 1;
-
-  if (!strcmp(method_str, "GET")) {
-    http_request->method = GET;
-    printf("[Socket %d]: Parsed HTTP Method: GET\n", socket_fd);
-  }
-  if (!strcmp(method_str, "POST")) {
-    http_request->method = POST;
-    printf("[Socket %d]: Parsed HTTP Method: POST\n", socket_fd);
+  if (http_method_parse(method_buffer, &http_request->method) != HTTP_OK) {
+    fprintf(stderr, "Failed to parse HTTP Method!\n");
+    return HTTP_ERROR;
   }
 
   token_ptr = strpbrk(request_ptr, " ");
