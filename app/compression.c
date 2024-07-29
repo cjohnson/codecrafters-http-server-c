@@ -3,6 +3,7 @@
 
 #include "compression.h"
 
+// See https://stackoverflow.com/questions/49622938/gzip-compression-using-zlib-into-buffer/57699371#57699371
 void gzip_compress(
   const char *input,
   char *output,
